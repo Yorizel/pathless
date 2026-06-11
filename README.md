@@ -40,7 +40,15 @@ cargo check
 
 ## Estrutura
 
-- `src/main.rs`: jogo inteiro
+- `src/main.rs`: bootstrap do Bevy
+- `src/game.rs`: estado da run, ordem dos sistemas e restart
+- `src/shared.rs`: constantes e helpers compartilhados da arena
+- `src/world.rs`: câmera e cenário
+- `src/player.rs`: componente e sistemas do jogador
+- `src/enemy.rs`: componente e sistemas dos inimigos
+- `src/encounter.rs`: waves e spawn de inimigos
+- `src/combat.rs`: ataque, mortes e VFX simples
+- `src/presentation.rs`: HUD
 - `Cargo.toml`: dependências
 
 Sem assets externos e sem geração de código.
