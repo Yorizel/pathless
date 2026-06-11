@@ -15,12 +15,70 @@ pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player).add_systems(
-            Update,
-            move_player
-                .in_set(GameSet::Player)
-                .run_if(in_state(RunState::Playing)),
-        );
+        app.init_resource::<UpgradeChoices>()
+            .add_systems(Startup, spawn_player)
+            .add_systems(
+                Update,
+                move_player
+                    .in_set(GameSet::Player)
+                    .run_if(in_state(RunState::Playing)),
+            )
+            .add_systems(
+                Update,
+                choose_upgrade
+                    .in_set(GameSet::Player)
+                    .run_if(in_state(RunState::LevelUp)),
+            );
+    }
+}
+
+const UPGRADE_CHOICES: [UpgradeKind; 3] = [
+    UpgradeKind::SharpBlade,
+    UpgradeKind::QuickBreath,
+    UpgradeKind::WarmBlood,
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpgradeKind {
+    SharpBlade,
+    QuickBreath,
+    WarmBlood,
+}
+
+impl UpgradeKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SharpBlade => "Lâmina afiada: +6 dano",
+            Self::QuickBreath => "Fôlego rápido: dash recarrega mais cedo",
+            Self::WarmBlood => "Sangue quente: +18 vida máxima e cura",
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct UpgradeChoices {
+    choices: [UpgradeKind; 3],
+}
+
+impl UpgradeChoices {
+    pub fn reset(&mut self) {
+        self.choices = UPGRADE_CHOICES;
+    }
+
+    pub fn choices(&self) -> &[UpgradeKind; 3] {
+        &self.choices
+    }
+
+    fn selected(&self, index: usize) -> Option<UpgradeKind> {
+        self.choices.get(index).copied()
+    }
+}
+
+impl Default for UpgradeChoices {
+    fn default() -> Self {
+        Self {
+            choices: UPGRADE_CHOICES,
+        }
     }
 }
 
@@ -35,6 +93,8 @@ pub struct Player {
     attack_cooldown: f32,
     dash_cooldown: f32,
     invulnerable: f32,
+    pending_upgrades: u32,
+    dash_recharge: f32,
     facing: Vec2,
 }
 
@@ -65,6 +125,9 @@ impl Player {
         self.damage
     }
 
+    pub fn dash_recharge(&self) -> f32 {
+        self.dash_recharge
+    }
     pub fn dash_cooldown(&self) -> f32 {
         self.dash_cooldown
     }
@@ -90,16 +153,49 @@ impl Player {
         self.invulnerable = HIT_IFRAME;
         self.hp <= 0.0
     }
+    pub fn is_dead(&self) -> bool {
+        self.hp <= 0.0
+    }
 
-    pub fn add_xp(&mut self, amount: u32) {
+    pub fn pending_upgrades(&self) -> u32 {
+        self.pending_upgrades
+    }
+
+    pub fn add_xp(&mut self, amount: u32) -> u32 {
         self.xp += amount;
+        let mut levels_gained = 0;
         while self.xp >= self.next_xp {
             self.xp -= self.next_xp;
             self.level += 1;
             self.next_xp += 3;
-            self.max_hp += 8.0;
-            self.hp = (self.hp + 24.0).min(self.max_hp);
-            self.damage += 4.0;
+            self.pending_upgrades += 1;
+            levels_gained += 1;
+        }
+        levels_gained
+    }
+
+    pub fn consume_pending_upgrade(&mut self) -> bool {
+        if self.pending_upgrades == 0 {
+            return false;
+        }
+
+        self.pending_upgrades -= 1;
+        true
+    }
+
+    pub fn apply_upgrade(&mut self, upgrade: UpgradeKind) {
+        match upgrade {
+            UpgradeKind::SharpBlade => {
+                self.damage += 6.0;
+            }
+            UpgradeKind::QuickBreath => {
+                self.dash_recharge = (self.dash_recharge - 0.12).max(0.45);
+                self.dash_cooldown = self.dash_cooldown.min(self.dash_recharge);
+            }
+            UpgradeKind::WarmBlood => {
+                self.max_hp += 18.0;
+                self.hp = (self.hp + 18.0).min(self.max_hp);
+            }
         }
     }
 
@@ -128,8 +224,10 @@ impl Default for Player {
             xp: 0,
             next_xp: 5,
             attack_cooldown: 0.0,
+            dash_recharge: DASH_COOLDOWN,
             dash_cooldown: 0.0,
             invulnerable: 0.0,
+            pending_upgrades: 0,
             facing: Vec2::X,
         }
     }
@@ -173,11 +271,45 @@ fn move_player(
         && player.dash_cooldown <= 0.0
     {
         transform.translation += (movement * DASH_DISTANCE).extend(0.0);
-        player.dash_cooldown = DASH_COOLDOWN;
+        player.dash_cooldown = player.dash_recharge;
         player.invulnerable = DASH_IFRAME;
     }
 
     clamp_to_arena(&mut transform.translation, Player::RADIUS);
+}
+
+fn choose_upgrade(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<RunState>>,
+    mut choices: ResMut<UpgradeChoices>,
+    mut player_query: Query<&mut Player>,
+) {
+    let index = if keyboard.just_pressed(KeyCode::Digit1) {
+        Some(0)
+    } else if keyboard.just_pressed(KeyCode::Digit2) {
+        Some(1)
+    } else if keyboard.just_pressed(KeyCode::Digit3) {
+        Some(2)
+    } else {
+        None
+    };
+
+    let Some(index) = index else {
+        return;
+    };
+    let Some(upgrade) = choices.selected(index) else {
+        return;
+    };
+    let Ok(mut player) = player_query.single_mut() else {
+        return;
+    };
+
+    player.apply_upgrade(upgrade);
+    player.consume_pending_upgrade();
+    choices.reset();
+    if player.pending_upgrades() == 0 {
+        next_state.set(RunState::Playing);
+    }
 }
 
 fn movement_input(keyboard: &ButtonInput<KeyCode>) -> Vec2 {
@@ -236,14 +368,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn xp_rolls_over_and_applies_level_reward() {
+    fn xp_rolls_over_and_waits_for_upgrade_choice() {
         let mut player = Player::default();
 
-        player.add_xp(6);
+        assert_eq!(player.add_xp(6), 1);
 
         assert_eq!(player.level(), 2);
         assert_eq!(player.xp(), 1);
         assert_eq!(player.next_xp(), 8);
-        assert!(player.damage() > Player::default().damage());
+        assert_eq!(player.pending_upgrades(), 1);
+        assert_eq!(player.damage(), Player::default().damage());
+    }
+
+    #[test]
+    fn xp_can_queue_multiple_upgrade_choices() {
+        let mut player = Player::default();
+
+        assert_eq!(player.add_xp(14), 2);
+
+        assert_eq!(player.level(), 3);
+        assert_eq!(player.xp(), 1);
+        assert_eq!(player.next_xp(), 11);
+        assert_eq!(player.pending_upgrades(), 2);
+        assert!(player.consume_pending_upgrade());
+        assert_eq!(player.pending_upgrades(), 1);
+        assert!(player.consume_pending_upgrade());
+        assert_eq!(player.pending_upgrades(), 0);
+        assert!(!player.consume_pending_upgrade());
+    }
+
+    #[test]
+    fn player_hit_invulnerability_prevents_double_damage() {
+        let mut player = Player::default();
+
+        assert!(!player.receive_hit(25.0));
+        assert_eq!(player.hp(), 75.0);
+
+        assert!(!player.receive_hit(25.0));
+        assert_eq!(player.hp(), 75.0);
+
+        player.tick_timers(HIT_IFRAME);
+        assert!(player.receive_hit(100.0));
+        assert_eq!(player.hp(), 0.0);
+        assert!(player.is_dead());
+    }
+
+    #[test]
+    fn upgrades_apply_explicit_rewards() {
+        let mut player = Player::default();
+
+        player.apply_upgrade(UpgradeKind::SharpBlade);
+        assert_eq!(player.damage(), 30.0);
+
+        player.apply_upgrade(UpgradeKind::WarmBlood);
+        assert_eq!(player.max_hp(), 118.0);
+        assert_eq!(player.hp(), 118.0);
+
+        player.apply_upgrade(UpgradeKind::QuickBreath);
+        assert!(player.dash_recharge() < 1.0);
+    }
+
+    #[test]
+    fn quick_breath_has_a_floor() {
+        let mut player = Player::default();
+
+        for _ in 0..20 {
+            player.apply_upgrade(UpgradeKind::QuickBreath);
+        }
+
+        assert_eq!(player.dash_recharge(), 0.45);
     }
 }

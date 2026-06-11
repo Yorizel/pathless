@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::{
     game::{GameSet, RunProgress, RunState},
-    player::Player,
+    player::{Player, UpgradeChoices},
 };
 
 pub struct PresentationPlugin;
@@ -48,6 +48,7 @@ fn update_hud(
     progress: Res<RunProgress>,
     run_state: Res<State<RunState>>,
     player_query: Query<&Player>,
+    choices: Res<UpgradeChoices>,
     mut hud_query: Query<&mut Text, With<HudText>>,
 ) {
     let Ok(player) = player_query.single() else {
@@ -58,13 +59,19 @@ fn update_hud(
     };
 
     let status = match run_state.get() {
-        RunState::GameOver => "GAME OVER — pressione R para reiniciar",
-        RunState::Playing if progress.enemies_left_to_spawn() == 0 => "limpe a arena",
-        RunState::Playing => "sobreviva",
+        RunState::GameOver => "GAME OVER — pressione R para reiniciar".to_owned(),
+        RunState::LevelUp => format!(
+            "LEVEL UP\n1 - {}\n2 - {}\n3 - {}",
+            choices.choices()[0].label(),
+            choices.choices()[1].label(),
+            choices.choices()[2].label(),
+        ),
+        RunState::Playing if progress.enemies_left_to_spawn() == 0 => "limpe a arena".to_owned(),
+        RunState::Playing => "sobreviva".to_owned(),
     };
 
     text.0 = format!(
-        "Pathless\nWave {}  Kills {}\nVida {:.0}/{:.0}  Nível {}  XP {}/{}\nAtaque {:.0}  Dash {:.1}s\n{}",
+        "Pathless\nWave {}  Kills {}\nVida {:.0}/{:.0}  Nível {}  XP {}/{}\nAtaque {:.0}  Dash {:.1}/{:.1}s\n{}",
         progress.wave(),
         progress.kills(),
         player.hp(),
@@ -74,6 +81,7 @@ fn update_hud(
         player.next_xp(),
         player.damage(),
         player.dash_cooldown(),
+        player.dash_recharge(),
         status
     );
 }

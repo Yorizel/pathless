@@ -4,6 +4,7 @@ use crate::{
     enemy::Enemy,
     game::{GameSet, RunProgress, RunState},
     player::Player,
+    sfx::{GameSfx, play_sfx},
 };
 
 const ATTACK_RANGE: f32 = 84.0;
@@ -41,6 +42,7 @@ fn player_attack(
     mouse: Res<ButtonInput<MouseButton>>,
     mut player_query: Query<(&Transform, &mut Player)>,
     mut enemies: Query<(&Transform, &mut Enemy)>,
+    sfx: Option<Res<GameSfx>>,
 ) {
     let Ok((player_transform, mut player)) = player_query.single_mut() else {
         return;
@@ -54,11 +56,17 @@ fn player_attack(
     player.begin_attack(ATTACK_COOLDOWN);
     let origin = player_transform.translation.truncate();
     let facing = player.facing();
+    if let Some(sfx) = sfx.as_ref() {
+        play_sfx(&mut commands, &sfx.attack);
+    }
     spawn_slash_fx(&mut commands, origin, facing);
 
     for (enemy_transform, mut enemy) in &mut enemies {
         if attack_hits_enemy(origin, facing, enemy_transform.translation.truncate()) {
             enemy.take_damage(player.damage());
+            if let Some(sfx) = sfx.as_ref() {
+                play_sfx(&mut commands, &sfx.hit);
+            }
         }
     }
 }
@@ -68,6 +76,7 @@ fn cleanup_dead(
     mut progress: ResMut<RunProgress>,
     mut player_query: Query<&mut Player>,
     enemies: Query<(Entity, &Enemy)>,
+    sfx: Option<Res<GameSfx>>,
 ) {
     let Ok(mut player) = player_query.single_mut() else {
         return;
@@ -80,7 +89,11 @@ fn cleanup_dead(
 
         commands.entity(entity).despawn();
         progress.record_kill();
-        player.add_xp(enemy.xp_reward());
+        if player.add_xp(enemy.xp_reward()) > 0 {
+            if let Some(sfx) = sfx.as_ref() {
+                play_sfx(&mut commands, &sfx.level_up);
+            }
+        }
     }
 }
 
@@ -117,4 +130,34 @@ fn attack_hits_enemy(origin: Vec2, facing: Vec2, enemy_position: Vec2) -> bool {
     let in_range = distance <= ATTACK_RANGE + Enemy::RADIUS;
     let in_arc = distance <= 0.1 || facing.dot(to_enemy / distance) >= ATTACK_ARC_DOT;
     in_range && in_arc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attack_hits_enemies_in_front_inside_range() {
+        let origin = Vec2::ZERO;
+        let facing = Vec2::X;
+
+        assert!(attack_hits_enemy(
+            origin,
+            facing,
+            Vec2::new(ATTACK_RANGE + Enemy::RADIUS, 0.0)
+        ));
+    }
+
+    #[test]
+    fn attack_ignores_enemies_behind_or_outside_range() {
+        let origin = Vec2::ZERO;
+        let facing = Vec2::X;
+
+        assert!(!attack_hits_enemy(origin, facing, Vec2::new(-20.0, 0.0)));
+        assert!(!attack_hits_enemy(
+            origin,
+            facing,
+            Vec2::new(ATTACK_RANGE + Enemy::RADIUS + 0.1, 0.0)
+        ));
+    }
 }

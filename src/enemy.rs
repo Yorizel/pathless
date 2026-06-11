@@ -15,13 +15,20 @@ impl Plugin for EnemyPlugin {
             move_enemies
                 .in_set(GameSet::Enemy)
                 .run_if(in_state(RunState::Playing)),
-        );
+        )
+        .add_systems(Update, update_enemy_health_bars.in_set(GameSet::Ui));
     }
+}
+
+#[derive(Component)]
+struct EnemyHealthBar {
+    enemy: Entity,
 }
 
 #[derive(Component)]
 pub struct Enemy {
     hp: f32,
+    max_hp: f32,
     speed: f32,
     damage: f32,
     xp: u32,
@@ -33,8 +40,10 @@ impl Enemy {
 
     pub fn for_wave(wave: u32) -> Self {
         let wave_bonus = wave.saturating_sub(1) as f32;
+        let max_hp = 24.0 + wave_bonus * 5.0;
         Self {
-            hp: 24.0 + wave_bonus * 5.0,
+            hp: max_hp,
+            max_hp,
             speed: 78.0 + wave_bonus.min(6.0) * 4.0,
             damage: 9.0 + wave_bonus * 0.8,
             xp: 1,
@@ -44,6 +53,14 @@ impl Enemy {
 
     pub fn take_damage(&mut self, damage: f32) {
         self.hp -= damage;
+    }
+
+    pub fn hp_fraction(&self) -> f32 {
+        if self.max_hp <= 0.0 {
+            0.0
+        } else {
+            (self.hp / self.max_hp).clamp(0.0, 1.0)
+        }
     }
 
     pub fn is_dead(&self) -> bool {
@@ -69,7 +86,7 @@ impl Enemy {
 }
 
 pub fn spawn_enemy(commands: &mut Commands, position: Vec2, wave: u32) {
-    commands.spawn((
+    let mut enemy = commands.spawn((
         Sprite::from_color(
             Color::srgb(0.82, 0.2, 0.18),
             Vec2::splat(Enemy::RADIUS * 2.0),
@@ -77,11 +94,24 @@ pub fn spawn_enemy(commands: &mut Commands, position: Vec2, wave: u32) {
         Transform::from_xyz(position.x, position.y, 1.0),
         Enemy::for_wave(wave),
     ));
+    let enemy_entity = enemy.id();
+    enemy.with_children(|children| {
+        children.spawn((
+            Sprite::from_color(Color::srgba(0.04, 0.05, 0.07, 0.9), Vec2::new(34.0, 5.0)),
+            Transform::from_xyz(0.0, Enemy::RADIUS + 8.0, 1.0),
+        ));
+        children.spawn((
+            Sprite::from_color(Color::srgb(0.15, 0.9, 0.32), Vec2::new(30.0, 3.0)),
+            Transform::from_xyz(0.0, Enemy::RADIUS + 8.0, 2.0),
+            EnemyHealthBar {
+                enemy: enemy_entity,
+            },
+        ));
+    });
 }
 
 fn move_enemies(
     time: Res<Time>,
-    mut next_state: ResMut<NextState<RunState>>,
     mut player_query: Query<(&Transform, &mut Player), Without<Enemy>>,
     mut enemies: Query<(&mut Transform, &mut Enemy), Without<Player>>,
 ) {
@@ -103,8 +133,57 @@ fn move_enemies(
             continue;
         }
 
-        if enemy.can_attack(time.delta()) && player.receive_hit(enemy.damage()) {
-            next_state.set(RunState::GameOver);
+        if enemy.can_attack(time.delta()) {
+            player.receive_hit(enemy.damage());
         }
+    }
+}
+
+fn update_enemy_health_bars(
+    mut commands: Commands,
+    enemies: Query<&Enemy>,
+    mut bars: Query<(Entity, &EnemyHealthBar, &mut Transform, &mut Sprite)>,
+) {
+    for (bar_entity, bar, mut transform, mut sprite) in &mut bars {
+        let Ok(enemy) = enemies.get(bar.enemy) else {
+            commands.entity(bar_entity).despawn();
+            continue;
+        };
+
+        let fraction = enemy.hp_fraction();
+        transform.scale.x = fraction;
+        sprite.color = health_bar_color(fraction);
+    }
+}
+
+fn health_bar_color(fraction: f32) -> Color {
+    if fraction > 0.45 {
+        Color::srgb(0.15, 0.9, 0.32)
+    } else {
+        Color::srgb(0.95, 0.22, 0.12)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enemy_hp_fraction_is_clamped() {
+        let mut enemy = Enemy::for_wave(1);
+
+        assert_eq!(enemy.hp_fraction(), 1.0);
+
+        enemy.take_damage(12.0);
+        assert_eq!(enemy.hp_fraction(), 0.5);
+
+        enemy.take_damage(100.0);
+        assert_eq!(enemy.hp_fraction(), 0.0);
+    }
+
+    #[test]
+    fn enemy_health_bar_turns_red_when_low() {
+        assert_eq!(health_bar_color(0.46), Color::srgb(0.15, 0.9, 0.32));
+        assert_eq!(health_bar_color(0.45), Color::srgb(0.95, 0.22, 0.12));
     }
 }

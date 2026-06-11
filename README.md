@@ -12,8 +12,10 @@ O objetivo é aprender Bevy com um jogo simples, público e fácil de rodar, ler
 - ataque básico em arco
 - dash curto com cooldown
 - waves de inimigos melee
-- XP, level up automático e aumento simples de vida/dano
-- HUD com vida, wave, kills e XP
+- XP com escolhas de upgrade estilo Vampire Survivors
+- barra de vida nos inimigos
+- efeitos sonoros simples de ataque, hit e level up
+- HUD com vida, wave, kills, XP, upgrade e dash
 - game over com restart
 
 ## Controles
@@ -28,15 +30,29 @@ O objetivo é aprender Bevy com um jogo simples, público e fácil de rodar, ler
 
 Pré-requisito: Rust instalado.
 
+Clone e rode pela raiz do projeto:
+
 ```bash
+git clone https://github.com/Yorizel/pathless.git
+cd pathless
 cargo run
 ```
 
-Para validar sem abrir a janela:
+Na primeira vez o Rust baixa e compila o Bevy, então pode demorar alguns minutos antes da janela abrir.
+
+Se quiser só validar que o projeto compila:
 
 ```bash
 cargo check
 ```
+
+Se `cargo run` terminar sem abrir janela, rode:
+
+```bash
+cargo run --release
+```
+
+Se ainda não abrir, copie a saída completa do terminal. Em Linux, Bevy também precisa de driver gráfico/Vulkan funcionando.
 
 ## Estrutura
 
@@ -48,7 +64,9 @@ cargo check
 - `src/enemy.rs`: componente e sistemas dos inimigos
 - `src/encounter.rs`: waves e spawn de inimigos
 - `src/combat.rs`: ataque, mortes e VFX simples
+- `src/sfx.rs`: carregamento e disparo dos efeitos sonoros
 - `src/presentation.rs`: HUD
+- `assets/sounds/`: efeitos sonoros OGG
 - `Cargo.toml`: dependências
 
-Sem assets externos e sem geração de código.
+Assets sonoros ficam em OGG/Vorbis para usar o decoder padrão do Bevy.

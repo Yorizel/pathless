@@ -6,6 +6,7 @@ use crate::{
     enemy::{Enemy, EnemyPlugin},
     player::{Player, PlayerPlugin},
     presentation::PresentationPlugin,
+    sfx::SfxPlugin,
     shared::SPAWN_POINTS,
     world::WorldPlugin,
 };
@@ -25,6 +26,7 @@ impl Plugin for GamePlugin {
                     GameSet::Combat,
                     GameSet::Cleanup,
                     GameSet::Enemy,
+                    GameSet::Resolve,
                     GameSet::Vfx,
                     GameSet::Ui,
                 )
@@ -36,8 +38,10 @@ impl Plugin for GamePlugin {
                 EncounterPlugin,
                 CombatPlugin,
                 EnemyPlugin,
+                SfxPlugin,
                 PresentationPlugin,
             ))
+            .add_systems(Update, resolve_run_state.in_set(GameSet::Resolve))
             .add_systems(
                 Update,
                 restart_from_game_over
@@ -51,6 +55,7 @@ impl Plugin for GamePlugin {
 pub enum RunState {
     #[default]
     Playing,
+    LevelUp,
     GameOver,
 }
 
@@ -62,6 +67,7 @@ pub enum GameSet {
     Combat,
     Cleanup,
     Enemy,
+    Resolve,
     Vfx,
     Ui,
 }
@@ -145,6 +151,26 @@ impl Default for RunProgress {
     }
 }
 
+fn resolve_run_state(player_query: Query<&Player>, mut next_state: ResMut<NextState<RunState>>) {
+    let Ok(player) = player_query.single() else {
+        return;
+    };
+
+    if let Some(state) = next_run_state_for_player(player) {
+        next_state.set(state);
+    }
+}
+
+fn next_run_state_for_player(player: &Player) -> Option<RunState> {
+    if player.is_dead() {
+        Some(RunState::GameOver)
+    } else if player.pending_upgrades() > 0 {
+        Some(RunState::LevelUp)
+    } else {
+        None
+    }
+}
+
 fn restart_from_game_over(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<RunState>>,
@@ -189,5 +215,25 @@ mod tests {
         progress.tick_spawn_timer(std::time::Duration::from_secs_f32(0.55));
         assert!(progress.take_spawn_point().is_some());
         assert_eq!(progress.enemies_left_to_spawn(), 4);
+    }
+
+    #[test]
+    fn run_state_resolution_prioritizes_death_over_level_up() {
+        let mut player = Player::default();
+        assert_eq!(player.add_xp(6), 1);
+        player.receive_hit(100.0);
+
+        assert_eq!(next_run_state_for_player(&player), Some(RunState::GameOver));
+    }
+
+    #[test]
+    fn run_state_resolution_pauses_for_pending_upgrades() {
+        let mut player = Player::default();
+        assert_eq!(player.add_xp(6), 1);
+
+        assert_eq!(next_run_state_for_player(&player), Some(RunState::LevelUp));
+
+        player.consume_pending_upgrade();
+        assert_eq!(next_run_state_for_player(&player), None);
     }
 }

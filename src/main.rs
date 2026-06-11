@@ -6,6 +6,7 @@ mod enemy;
 mod game;
 mod player;
 mod presentation;
+mod sfx;
 mod shared;
 mod world;
 
